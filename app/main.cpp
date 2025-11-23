@@ -4,6 +4,6 @@
 int main() {
     std::cout << "Hello, Event Contract Bot!" << std::endl;
 
-    initializeDatabase();
+    initialize_database();
     return 0;
 }

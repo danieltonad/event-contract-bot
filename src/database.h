@@ -2,4 +2,4 @@
 #include <iostream>
 #include "sqlite3.h"
 
-int initializeDatabase();
+int initialize_database();
