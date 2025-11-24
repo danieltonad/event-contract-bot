@@ -11,8 +11,20 @@ std::string to_string_safe(const T& value) {
 }
 
 
-inline double round_figure(double value) {
-    return std::floor(value * 100.0 + 0.5) / 100.0;
+inline bool is_integer(const std::string& s) {
+    if (s.empty()) return false;
+    size_t i = 0;
+    if (s[0] == '-' || s[0] == '+') i = 1;
+    for (; i < s.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(s[i]))) return false;
+    }
+    return true;
+}
+
+
+inline double round_figure(double value, int decimals = 2) {
+    double factor = std::pow(10.0, decimals);
+    return std::round(value * factor) / factor;
 }
 
 
@@ -22,6 +34,10 @@ inline void error_msg(const std::string& s) {
 
 inline void success_msg(const std::string& s) {
     std::cout << "\033[92m" + s + "\033[0m" << std::endl;
+}
+
+inline void warning_msg(const std::string& s) {
+    std::cout << "\033[2;33m" + s + "\033[0m" << std::endl;
 }
 
 inline bool is_valid_datetime(const std::string& s) {

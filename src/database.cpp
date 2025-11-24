@@ -283,7 +283,7 @@ void resolve_event_outcome(int event_id, bool outcome) {
 
 
 // update event order counts or other stats
-void update_event_state(int event_id, double q_yes, double q_no) {
+void update_event_state(int event_id, double q_yes, double q_no, double event_funds) {
     sqlite3* db = nullptr;
     sqlite3_stmt* stmt = nullptr;
 
@@ -293,9 +293,9 @@ void update_event_state(int event_id, double q_yes, double q_no) {
     }
 
     // Round values to 2 decimal places
-    q_yes = round_figure(q_yes);
-    q_no = round_figure(q_no);
-    double event_funds = round_figure(q_yes + q_no);
+    q_yes = q_yes;
+    q_no = q_no;
+    event_funds = round_figure(event_funds);
 
     // Update event: q_yes, q_no, event_funds, increment order_count
     const char* sql = R"(
@@ -327,6 +327,81 @@ void update_event_state(int event_id, double q_yes, double q_no) {
     sqlite3_close(db);
 }
 
+
+// retrieve event details (for future use)
+Event get_event_details(const std::string& id_or_tag) {
+    Event ev;
+    sqlite3* db = nullptr;
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_open(database_path, &db)) {
+        error_msg("Can't open database: " + std::string(db ? sqlite3_errmsg(db) : "unknown"));
+        if (db) sqlite3_close(db);
+        return ev;
+    }
+
+    std::string sql = R"(
+        SELECT id, tag, name, risk_cap, outcome, resolved, q_yes, q_no, event_funds,
+               win_payout, order_count, profit_loss, maturity, created_at, resolved_at
+        FROM events
+        WHERE
+    )";
+
+    bool use_id = is_integer(id_or_tag);
+    if (use_id) sql += "id = ?;";
+    else sql += "tag = ?;";
+
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        error_msg("Failed to prepare select statement: " + std::string(sqlite3_errmsg(db)));
+        sqlite3_close(db);
+        return ev;
+    }
+
+    if (use_id) {
+        sqlite3_bind_int(stmt, 1, std::stoi(id_or_tag));
+    } else {
+        sqlite3_bind_text(stmt, 1, id_or_tag.c_str(), -1, SQLITE_TRANSIENT);
+    }
+
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        ev.id = sqlite3_column_int(stmt, 0);
+
+        const unsigned char* txt = sqlite3_column_text(stmt, 1);
+        ev.tag = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        txt = sqlite3_column_text(stmt, 2);
+        ev.name = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        ev.risk_cap = sqlite3_column_double(stmt, 3);
+
+        ev.outcome = (sqlite3_column_type(stmt, 4) == SQLITE_NULL) ? -1 : sqlite3_column_int(stmt, 4);
+        ev.resolved = sqlite3_column_int(stmt, 5) != 0;
+        ev.q_yes = sqlite3_column_double(stmt, 6);
+        ev.q_no = sqlite3_column_double(stmt, 7);
+        ev.event_funds = sqlite3_column_double(stmt, 8);
+        ev.win_payout = sqlite3_column_double(stmt, 9);
+        ev.order_count = sqlite3_column_int(stmt, 10);
+        ev.profit_loss = sqlite3_column_double(stmt, 11);
+
+        txt = sqlite3_column_text(stmt, 12);
+        ev.maturity = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        txt = sqlite3_column_text(stmt, 13);
+        ev.created_at = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        txt = sqlite3_column_text(stmt, 14);
+        ev.resolved_at = txt ? reinterpret_cast<const char*>(txt) : std::string();
+    } else if (rc == SQLITE_DONE) {
+        error_msg("Event not found for '" + id_or_tag + "'.");
+    } else {
+        error_msg("Failed to read event: " + std::string(sqlite3_errmsg(db)));
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return ev;
+}
 
 
 
@@ -429,7 +504,7 @@ void new_order(int event_id, bool side, double stake, double price, double expec
             error_msg("Failed to commit transaction: " + std::string(errMsg ? errMsg : ""));
             sqlite3_free(errMsg);
         } else {
-            success_msg("Order added successfully (event_id=" + to_string_safe(event_id) + ", stake=" + to_string_safe(stake) + ").");
+            success_msg("Order added successfully (event_id=" + to_string_safe(event_id) + ", stake=" + to_string_safe(stake) + ", cashout=" + to_string_safe(expected_cashout) + ", side=" + (side ? "YES" : "NO") + ").");
         }
     } else {
         if (sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
