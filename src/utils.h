@@ -40,6 +40,10 @@ inline void warning_msg(const std::string& s) {
     std::cout << "\033[2;33m" + s + "\033[0m" << std::endl;
 }
 
+inline void notify(const std::string& s) {
+    std::cout << "\033[3;34m" + s + "\033[0m" << std::endl;
+}
+
 inline bool is_valid_datetime(const std::string& s) {
     if (s.size() != 19) return false;
     for (size_t i = 0; i < s.size(); ++i) {

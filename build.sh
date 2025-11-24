@@ -7,7 +7,7 @@ mkdir -p $BUILD_DIR
 OUTPUT="$BUILD_DIR/event-contract-bot"
 
 # Paths
-CPP_SRC="app/main.cpp src/*.cpp"
+CPP_SRC="app/*.cpp src/*.cpp"
 C_SRC="vendor/sqlite/sqlite3.c"
 OBJ="$BUILD_DIR/sqlite3.o"
 INCLUDE_DIRS="-I./src -I./vendor/sqlite"

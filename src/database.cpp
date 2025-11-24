@@ -20,8 +20,6 @@ int initialize_database() {
         return 1;
     }
 
-    std::cout << "Opened SQLite database successfully!" << std::endl;
-
     const char* events_sql = R"(
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,8 +68,6 @@ int initialize_database() {
         sqlite3_close(db);
         return 1;
     }
-
-    std::cout << "Tables created or verified successfully!" << std::endl;
 
     sqlite3_close(db);
     return 0;
@@ -428,10 +424,19 @@ void new_order(int event_id, bool side, double stake, double price, double expec
     char* errMsg = nullptr;
 
     if (sqlite3_open(database_path, &db)) {
-        error_msg("Can't open database: " + std::string(sqlite3_errmsg(db)));
-        if (db) sqlite3_close(db);
+    error_msg("Can't open database: " + std::string(sqlite3_errmsg(db)));
+    if (db) sqlite3_close(db);
+    return;
+    }
+
+    // Enable foreign key checks
+    if (sqlite3_exec(db, "PRAGMA foreign_keys = ON;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        error_msg("Failed to enable foreign keys: " + std::string(errMsg ? errMsg : ""));
+        sqlite3_free(errMsg);
+        sqlite3_close(db);
         return;
     }
+
 
     // Begin transaction
     if (sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
@@ -638,7 +643,7 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
             error_msg("Failed to commit transaction: " + std::string(errMsg ? errMsg : ""));
             sqlite3_free(errMsg);
         } else {
-            std::cout << "Order payouts updated for event_id=" << event_id << ", total_payouts=" << total_payouts << " Expected total payouts=" << expected_total_payouts << std::endl;
+            notify("Order payouts updated for event_id=" + to_string_safe(event_id) + ", total_payouts=" + to_string_safe(total_payouts) + ", Expected total payouts=" + to_string_safe(expected_total_payouts) + ".");
         }
     } else {
         if (sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
