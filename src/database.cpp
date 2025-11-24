@@ -1,13 +1,10 @@
 #include "database.h"
+#include "utils.h"
+#include <ctime>
+#include <cstdio>     // for std::sscanf
+#include <cctype>     // for std::isdigit
 
 const char* database_path = "database.db";
-
-
-// helper function to execute SQL commands without results
-// Helper to round a double to 2 decimal places
-inline double round2(double value) {
-    return std::round(value * 100.0) / 100.0;
-}
 
 
 
@@ -19,7 +16,7 @@ int initialize_database() {
     
 
     if (sqlite3_open(database_path, &db)) {
-        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to open database." + std::string(sqlite3_errmsg(db)));
         return 1;
     }
 
@@ -39,6 +36,7 @@ int initialize_database() {
             win_payout REAL DEFAULT 0,
             order_count INTEGER DEFAULT 0,
             profit_loss REAL DEFAULT 0,
+            maturity DATETIME NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             resolved_at DATETIME NULL
         );
@@ -60,14 +58,14 @@ int initialize_database() {
 
     char* errMsg = nullptr;
     if (sqlite3_exec(db, events_sql, nullptr, nullptr, &errMsg) != SQLITE_OK) {
-        std::cerr << "SQL error (events table): " << errMsg << std::endl;
+        error_msg("SQL error (events table): " + std::string(errMsg));
         sqlite3_free(errMsg);
         sqlite3_close(db);
         return 1;
     }
 
     if (sqlite3_exec(db, order_book_sql, nullptr, nullptr, &errMsg) != SQLITE_OK) {
-        std::cerr << "SQL error (order_book table): " << errMsg << std::endl;
+        error_msg("SQL error (order_book table): " + std::string(errMsg));
         sqlite3_free(errMsg);
         sqlite3_close(db);
         return 1;
@@ -94,46 +92,108 @@ int initialize_database() {
 ** Event Related Functions
 *************************************************************************/
 /** create a new event in the events table */
-void new_event(const std::string& tag, const std::string& name, double risk_cap = 100.0) {
-    sqlite3* db;
-    sqlite3_stmt* stmt;
-    int rc;
+int new_event(const std::string& tag, const std::string& name, const std::string& maturity, double risk_cap) {
+    // maturity must follow "YYYY-MM-DD HH:MM:SS"
 
-    // Open database
-    rc = sqlite3_open(database_path, &db);
-    if (rc) {
-        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
-        return;
+    if (!valid_maturity(maturity)) {
+        error_msg("Invalid maturity format. Expected YYYY-MM-DD HH:MM:SS\n");
+        return -1;
     }
 
-    // SQL with placeholders
+    // Parse components and ensure the datetime is not in the past
+    int Y, Mo, D, hh, mm, ss;
+    if (std::sscanf(maturity.c_str(), "%4d-%2d-%2d %2d:%2d:%2d", &Y, &Mo, &D, &hh, &mm, &ss) != 6) {
+        error_msg("Invalid maturity contents.\n");
+        return -1;
+    }
+
+    std::tm tm = {};
+    tm.tm_year = Y - 1900;
+    tm.tm_mon  = Mo - 1;
+    tm.tm_mday = D;
+    tm.tm_hour = hh;
+    tm.tm_min  = mm;
+    tm.tm_sec  = ss;
+    tm.tm_isdst = -1; // let mktime determine DST
+
+    time_t maturity_time = std::mktime(&tm);
+    if (maturity_time == -1) {
+        error_msg("Failed to parse maturity time.\n");
+        return -1;
+    }
+
+    // mktime normalizes the tm; ensure the normalized values match the input to catch invalid dates (e.g., Feb 30)
+    if (tm.tm_year != Y - 1900 || tm.tm_mon != Mo - 1 || tm.tm_mday != D ||
+        tm.tm_hour != hh || tm.tm_min != mm || tm.tm_sec != ss) {
+        error_msg("Invalid maturity date (out-of-range components).\n");
+        return -1;
+    }
+
+    time_t now = std::time(nullptr);
+    if (maturity_time <= now) {
+        error_msg("Maturity must be a future date/time.\n");
+        return -1;
+    }
+
+    sqlite3* db = nullptr;
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_open(database_path, &db);
+    if (rc != SQLITE_OK) {
+        error_msg("Can't open database: " + std::string(db ? sqlite3_errmsg(db) : "unknown"));
+        if (db) sqlite3_close(db);
+        return -1;
+    }
+
+    // Check for existing tag to avoid UNIQUE constraint error
+    const char* check_sql = "SELECT id FROM events WHERE tag = ?;";
+    rc = sqlite3_prepare_v2(db, check_sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        error_msg("Failed to prepare tag-check statement: " + std::string(sqlite3_errmsg(db)));
+        sqlite3_close(db);
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        int existing_id = sqlite3_column_int(stmt, 0);
+        error_msg("Event with tag '" + tag + "' already exists (id=" + to_string_safe(existing_id) + ").");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return -1;
+    }
+    sqlite3_finalize(stmt);
+    stmt = nullptr;
+
     const char* sql = R"(
-        INSERT INTO events (tag, name, risk_cap)
-        VALUES (?, ?, ?)
+        INSERT INTO events (tag, name, risk_cap, maturity)
+        VALUES (?, ?, ?, ?)
     )";
 
     rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
-        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to prepare insert statement: " + std::string(sqlite3_errmsg(db)));
         sqlite3_close(db);
-        return;
+        return -1;
     }
 
-    // Bind parameters
-    sqlite3_bind_text(stmt, 1, tag.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, name.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, name.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_double(stmt, 3, risk_cap);
+    sqlite3_bind_text(stmt, 4, maturity.c_str(), -1, SQLITE_TRANSIENT);
 
-    // Execute
     rc = sqlite3_step(stmt);
+    int new_id = -1;
     if (rc != SQLITE_DONE) {
-        std::cerr << "Insert failed: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Insert failed: " + std::string(sqlite3_errmsg(db)));
     } else {
-        std::cout << "Event added successfully." << std::endl;
+        new_id = static_cast<int>(sqlite3_last_insert_rowid(db));
+        success_msg("Event added successfully (id=" + to_string_safe(new_id) + ").");
     }
 
     sqlite3_finalize(stmt);
     sqlite3_close(db);
+
+    return new_id;
 }
 
 
@@ -144,7 +204,7 @@ void resolve_event_outcome(int event_id, bool outcome) {
 
     // Open DB
     if (sqlite3_open(database_path, &db)) {
-        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Can't open database: " + std::string(sqlite3_errmsg(db)));
         if (db) sqlite3_close(db);
         return;
     }
@@ -152,7 +212,7 @@ void resolve_event_outcome(int event_id, bool outcome) {
     // 1. Check if event already resolved
     const char* select_sql = "SELECT resolved, event_funds, q_yes, q_no, win_payout FROM events WHERE id = ?;";
     if (sqlite3_prepare_v2(db, select_sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        std::cerr << "Failed to prepare select statement: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to prepare select statement: " + std::string(sqlite3_errmsg(db)));
         sqlite3_close(db);
         return;
     }
@@ -171,13 +231,13 @@ void resolve_event_outcome(int event_id, bool outcome) {
         win_payout = sqlite3_column_double(stmt, 4);
 
         if (resolved_flag) {
-            std::cerr << "Event already resolved (id=" << event_id << ")." << std::endl;
+            error_msg("Event already resolved (id=" + to_string_safe(event_id) + ").");
             sqlite3_finalize(stmt);
             sqlite3_close(db);
             return;
         }
     } else {
-        std::cerr << "Event not found (id=" << event_id << ")." << std::endl;
+        error_msg("Event not found (id=" + to_string_safe(event_id) + ").");
         sqlite3_finalize(stmt);
         sqlite3_close(db);
         return;
@@ -199,7 +259,7 @@ void resolve_event_outcome(int event_id, bool outcome) {
     )";
 
     if (sqlite3_prepare_v2(db, update_sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        std::cerr << "Failed to prepare update statement: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to prepare update statement: " + std::string(sqlite3_errmsg(db)));
         sqlite3_close(db);
         return;
     }
@@ -211,7 +271,7 @@ void resolve_event_outcome(int event_id, bool outcome) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        std::cerr << "Failed to update event: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to update event: " + std::string(sqlite3_errmsg(db)));
     }
 
     sqlite3_finalize(stmt);
@@ -228,14 +288,14 @@ void update_event_state(int event_id, double q_yes, double q_no) {
     sqlite3_stmt* stmt = nullptr;
 
     if (sqlite3_open(database_path, &db)) {
-        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Can't open database: " + std::string(sqlite3_errmsg(db)));
         return;
     }
 
     // Round values to 2 decimal places
-    q_yes = round2(q_yes);
-    q_no = round2(q_no);
-    double event_funds = round2(q_yes + q_no);
+    q_yes = round_figure(q_yes);
+    q_no = round_figure(q_no);
+    double event_funds = round_figure(q_yes + q_no);
 
     // Update event: q_yes, q_no, event_funds, increment order_count
     const char* sql = R"(
@@ -248,7 +308,7 @@ void update_event_state(int event_id, double q_yes, double q_no) {
     )";
 
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        std::cerr << "Failed to prepare update statement: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to prepare update statement: " + std::string(sqlite3_errmsg(db)));
         sqlite3_close(db);
         return;
     }
@@ -260,7 +320,7 @@ void update_event_state(int event_id, double q_yes, double q_no) {
 
     int rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        std::cerr << "Failed to update event state: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to update event state: " + std::string(sqlite3_errmsg(db)));
     }
 
     sqlite3_finalize(stmt);
@@ -288,19 +348,19 @@ void update_event_state(int event_id, double q_yes, double q_no) {
 
 
 /** add an order to the order_book table and update aggregate fields on events table */
-void add_order(int event_id, bool side, double stake, double price, double expected_cashout) {
+void new_order(int event_id, bool side, double stake, double price, double expected_cashout) {
     sqlite3* db = nullptr;
     char* errMsg = nullptr;
 
     if (sqlite3_open(database_path, &db)) {
-        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Can't open database: " + std::string(sqlite3_errmsg(db)));
         if (db) sqlite3_close(db);
         return;
     }
 
     // Begin transaction
     if (sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
-        std::cerr << "Failed to begin transaction: " << (errMsg ? errMsg : "") << std::endl;
+        error_msg("Failed to begin transaction: " + std::string(errMsg ? errMsg : ""));
         sqlite3_free(errMsg);
         sqlite3_close(db);
         return;
@@ -315,7 +375,7 @@ void add_order(int event_id, bool side, double stake, double price, double expec
     bool success = true;
 
     if (sqlite3_prepare_v2(db, insert_sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        std::cerr << "Failed to prepare insert statement: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to prepare insert statement: " + std::string(sqlite3_errmsg(db)));
         success = false;
     } else {
         sqlite3_bind_int(stmt, 1, event_id);
@@ -325,7 +385,7 @@ void add_order(int event_id, bool side, double stake, double price, double expec
         sqlite3_bind_double(stmt, 5, price);
 
         if (sqlite3_step(stmt) != SQLITE_DONE) {
-            std::cerr << "Failed to execute insert statement: " << sqlite3_errmsg(db) << std::endl;
+            error_msg("Failed to execute insert statement: " + std::string(sqlite3_errmsg(db)));
             success = false;
         }
     }
@@ -345,14 +405,14 @@ void add_order(int event_id, bool side, double stake, double price, double expec
         )";
 
         if (sqlite3_prepare_v2(db, update_sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            std::cerr << "Failed to prepare update statement: " << sqlite3_errmsg(db) << std::endl;
+            error_msg("Failed to prepare update statement: " + std::string(sqlite3_errmsg(db)));
             success = false;
         } else {
             sqlite3_bind_double(stmt, 1, stake);
             sqlite3_bind_int(stmt, 2, event_id);
 
             if (sqlite3_step(stmt) != SQLITE_DONE) {
-                std::cerr << "Failed to execute update statement: " << sqlite3_errmsg(db) << std::endl;
+                error_msg("Failed to execute update statement: " + std::string(sqlite3_errmsg(db)));
                 success = false;
             }
         }
@@ -366,14 +426,14 @@ void add_order(int event_id, bool side, double stake, double price, double expec
     // Commit or rollback
     if (success) {
         if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
-            std::cerr << "Failed to commit transaction: " << (errMsg ? errMsg : "") << std::endl;
+            error_msg("Failed to commit transaction: " + std::string(errMsg ? errMsg : ""));
             sqlite3_free(errMsg);
         } else {
-            std::cout << "Order added successfully (event_id=" << event_id << ", stake=" << stake << ")." << std::endl;
+            success_msg("Order added successfully (event_id=" + to_string_safe(event_id) + ", stake=" + to_string_safe(stake) + ").");
         }
     } else {
         if (sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
-            std::cerr << "Failed to rollback transaction: " << (errMsg ? errMsg : "") << std::endl;
+            error_msg("Failed to rollback transaction: " + std::string(errMsg ? errMsg : ""));
             sqlite3_free(errMsg);
         }
     }
@@ -388,14 +448,14 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
     char* errMsg = nullptr;
 
     if (sqlite3_open(database_path, &db)) {
-        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Can't open database: " + std::string(sqlite3_errmsg(db)));
         if (db) sqlite3_close(db);
         return;
     }
 
     // Begin transaction
     if (sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
-        std::cerr << "Failed to begin transaction: " << (errMsg ? errMsg : "") << std::endl;
+        error_msg("Failed to begin transaction: " + std::string(errMsg ? errMsg : ""));
         sqlite3_free(errMsg);
         sqlite3_close(db);
         return;
@@ -413,7 +473,7 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
     double total_payouts = 0.0;
 
     if (sqlite3_prepare_v2(db, select_sql, -1, &select_stmt, nullptr) != SQLITE_OK) {
-        std::cerr << "Failed to prepare select statement: " << sqlite3_errmsg(db) << std::endl;
+        error_msg("Failed to prepare select statement: " + std::string(sqlite3_errmsg(db)));
         success = false;
     } else {
         sqlite3_bind_int(select_stmt, 1, event_id);
@@ -425,7 +485,7 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
         )";
 
         if (sqlite3_prepare_v2(db, upd_sql, -1, &update_stmt, nullptr) != SQLITE_OK) {
-            std::cerr << "Failed to prepare update statement for order_book: " << sqlite3_errmsg(db) << std::endl;
+            error_msg("Failed to prepare update statement for order_book: " + std::string(sqlite3_errmsg(db)));
             success = false;
         } else {
             // Iterate through matching orders and update pay_out
@@ -444,7 +504,7 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
                 sqlite3_bind_int(update_stmt, 2, order_id);
 
                 if (sqlite3_step(update_stmt) != SQLITE_DONE) {
-                    std::cerr << "Failed to update order payout (id=" << order_id << "): " << sqlite3_errmsg(db) << std::endl;
+                    error_msg("Failed to update order payout (id=" + std::to_string(order_id) + "): " + std::string(sqlite3_errmsg(db)));
                     success = false;
                     break;
                 }
@@ -476,7 +536,7 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
 
         sqlite3_stmt* ev_stmt = nullptr;
         if (sqlite3_prepare_v2(db, update_event_sql, -1, &ev_stmt, nullptr) != SQLITE_OK) {
-            std::cerr << "Failed to prepare update statement for events: " << sqlite3_errmsg(db) << std::endl;
+            error_msg("Failed to prepare update statement for events: " + std::string(sqlite3_errmsg(db)));
             success = false;
         } else {
             sqlite3_bind_int(ev_stmt, 1, outcome ? 1 : 0);
@@ -486,7 +546,7 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
             sqlite3_bind_int(ev_stmt, 5, event_id);
 
             if (sqlite3_step(ev_stmt) != SQLITE_DONE) {
-                std::cerr << "Failed to update event aggregates (id=" << event_id << "): " << sqlite3_errmsg(db) << std::endl;
+                error_msg("Failed to update event aggregates (id=" + std::to_string(event_id) + "): " + std::string(sqlite3_errmsg(db)));
                 success = false;
             }
         }
@@ -500,14 +560,14 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
     // Commit or rollback
     if (success) {
         if (sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
-            std::cerr << "Failed to commit transaction: " << (errMsg ? errMsg : "") << std::endl;
+            error_msg("Failed to commit transaction: " + std::string(errMsg ? errMsg : ""));
             sqlite3_free(errMsg);
         } else {
             std::cout << "Order payouts updated for event_id=" << event_id << ", total_payouts=" << total_payouts << " Expected total payouts=" << expected_total_payouts << std::endl;
         }
     } else {
         if (sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
-            std::cerr << "Failed to rollback transaction: " << (errMsg ? errMsg : "") << std::endl;
+            error_msg("Failed to rollback transaction: " + std::string(errMsg ? errMsg : ""));
             sqlite3_free(errMsg);
         }
     }
