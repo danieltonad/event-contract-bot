@@ -7,6 +7,7 @@
 #include <cstdio>     // for std::sscanf
 #include <cctype>     // for std::isdigit
 #include <vector>
+#include <iomanip>
 
 
 extern const char* database_path;
@@ -21,6 +22,7 @@ void update_event_state(int event_id, double q_yes, double q_no, double event_fu
 void resolve_event_outcome(int event_id, bool outcome);
 Event get_event_details(const std::string& id_or_tag);
 std::vector<Event> list_all_events(bool resolved = false);
+void event_metrics_summary(int event_id);
 
 
 // order book related functions

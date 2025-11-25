@@ -27,5 +27,5 @@ private:
     bool event_quote(Event& event);
     bool event_orders(Event& event);
     bool resolve_event(Event& event);
-    bool metrics();
+    bool metrics(const int  event_id);
 };

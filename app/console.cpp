@@ -16,8 +16,10 @@ void Console::run()
     {
         state[e.id] = std::make_unique<LMSRContract>(e.id, e.name, e.risk_cap, e.q_yes, e.q_no, e.event_funds);
     }
-
-    warning_msg((std::string("[Resumed ") + to_string_safe(state.size()) + " ongoing contracts states from database.]\n").c_str());
+    if (state.size() > 0)
+    {
+        warning_msg((std::string("[Resumed ") + to_string_safe(state.size()) + " ongoing contracts states from database.]\n").c_str());
+    }
 
     // usage breif
     std::cout << "Type 'help' for list of commands.\n";
@@ -56,8 +58,6 @@ bool Console::dispatch(const std::string &cmd)
         return add_event();
     if (lowerCmd == "list")
         return list_events();
-    if (lowerCmd == "metrics")
-        return metrics();
 
     std::istringstream iss(lowerCmd);
     std::string command, arg;
@@ -69,6 +69,11 @@ bool Console::dispatch(const std::string &cmd)
         try
         {
             event = get_event_details(arg);
+             if (event.resolved)
+            {
+                error_msg("Event already resolved. Cannot get quote.\n");
+                return true;
+            }
             if (event.id == 0)
             {
                 return true;
@@ -81,12 +86,18 @@ bool Console::dispatch(const std::string &cmd)
         }
         return event_quote(event);
     }
+
     if (command == "stake")
     {
         Event event;
         try
         {
             event = get_event_details(arg);
+            if (event.resolved)
+            {
+                error_msg("Event already resolved. Cannot stake on resolved events.\n");
+                return true;
+            }
             if (event.id == 0)
             {
                 return true;
@@ -126,6 +137,11 @@ bool Console::dispatch(const std::string &cmd)
         try
         {
             event = get_event_details(arg);
+             if (event.resolved)
+            {
+                error_msg("Event already resolved \n");
+                return true;
+            }
             if (event.id == 0)
             {
                 return true;
@@ -139,6 +155,11 @@ bool Console::dispatch(const std::string &cmd)
         return resolve_event(event);
     }
 
+    if (command == "metrics")
+    {
+        return metrics(std::stoi(arg));
+    }
+
     std::cout << "Unknown command.\n";
     return true;
 }
@@ -149,11 +170,11 @@ bool Console::help()
     std::cout << "Commands:\n"
               << "  new      — create event\n"
               << "  list     — list events\n"
+              << "  stake      — stake/order event Yes/No\n"
               << "  quote <event id/tag> — get quote for event\n"
               << "  orders <event id/tag> — get orders for event\n"
               << "  resolve <event id/tag> — resolve event outcome\n"
-              << "  stake      — stake/order event Yes/No\n"
-              << "  metrics  — show event metrics\n"
+              << "  metrics <event id>  — show event metrics\n"
               << "  help     — show commands\n"
               << "  :q   — exit\n"
               << "  :b   — back/cancel\n";
@@ -463,8 +484,8 @@ bool Console::resolve_event(Event &event)
     return true;
 }
 
-bool Console::metrics()
+bool Console::metrics(const int event_id)
 {
-    std::cout << "Total events: " << "\n";
+    event_metrics_summary(event_id);
     return true;
 }

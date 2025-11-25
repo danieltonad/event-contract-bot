@@ -581,6 +581,181 @@ std::vector<Event> list_all_events(bool resolved)
     return events;
 }
 
+void event_metrics_summary(int event_id)
+{
+    sqlite3 *db = nullptr;
+    sqlite3_stmt *stmt = nullptr;
+
+    if (sqlite3_open(database_path, &db))
+    {
+        error_msg("Can't open database: " + std::string(sqlite3_errmsg(db)));
+        if (db)
+            sqlite3_close(db);
+        return;
+    }
+
+    // 1. Get event info
+    const char *event_sql = R"(
+        SELECT name, risk_cap, outcome, resolved, event_funds, win_payout, profit_loss
+        FROM events
+        WHERE id = ?;
+    )";
+
+    if (sqlite3_prepare_v2(db, event_sql, -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        error_msg("Failed to prepare event query: " + std::string(sqlite3_errmsg(db)));
+        sqlite3_close(db);
+        return;
+    }
+
+    sqlite3_bind_int(stmt, 1, event_id);
+
+    std::string event_name;
+    double risk_cap = 0.0;
+    int outcome = -1;
+    int resolved = 0;
+    double event_funds = 0.0;
+    double win_payout = 0.0;
+    double profit_loss = 0.0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        event_name = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+        risk_cap = sqlite3_column_double(stmt, 1);
+        outcome = sqlite3_column_type(stmt, 2) == SQLITE_NULL ? -1 : sqlite3_column_int(stmt, 2);
+        resolved = sqlite3_column_int(stmt, 3);
+        event_funds = sqlite3_column_double(stmt, 4);
+        win_payout = sqlite3_column_double(stmt, 5);
+        profit_loss = sqlite3_column_double(stmt, 6);
+    }
+    else
+    {
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        error_msg("Event not found (id=" + std::to_string(event_id) + ")");
+        return;
+    }
+    sqlite3_finalize(stmt);
+
+    // Aggregate order book data
+    const char *orders_sql = R"(
+        SELECT COUNT(*),
+               SUM(CASE WHEN side != 0 THEN stake ELSE 0 END),
+               SUM(CASE WHEN side = 0 THEN stake ELSE 0 END),
+               MAX(stake)
+        FROM order_book
+        WHERE event_id = ?;
+    )";
+
+    if (sqlite3_prepare_v2(db, orders_sql, -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        error_msg("Failed to prepare order aggregation: " + std::string(sqlite3_errmsg(db)));
+        sqlite3_close(db);
+        return;
+    }
+
+    sqlite3_bind_int(stmt, 1, event_id);
+
+    int total_orders = 0;
+    double total_yes = 0.0;
+    double total_no = 0.0;
+    double max_stake = 0.0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        total_orders = sqlite3_column_int(stmt, 0);
+        total_yes = sqlite3_column_double(stmt, 1);
+        total_no = sqlite3_column_double(stmt, 2);
+        max_stake = sqlite3_column_double(stmt, 3);
+    }
+    sqlite3_finalize(stmt);
+
+    // Compute winning side & potential loss if opposite side won
+    std::string win_side = "N/A";
+    double potential_loss_other_side = 0.0;
+
+    if (resolved)
+    {
+        win_side = (outcome != 0) ? "YES" : "NO";
+        potential_loss_other_side = (outcome != 0) ? total_no : total_yes;
+    }
+
+    // Print metrics in table box
+    const int label_width = 45;
+    const int value_width = 15;
+    const int table_width = label_width + value_width + 5; // 5 for "| : |" spacing
+
+    auto print_separator = [table_width]() {
+        std::cout << "+" << std::string(table_width - 2, '-') << "+\n";
+    };
+
+    auto print_row = [label_width, value_width, print_separator](const std::string& key, const std::string& value) {
+        print_separator();
+        std::cout << "| " << std::left << std::setw(label_width) << key
+                << " :" << std::right << std::setw(value_width - 1) << value << " |\n";
+    };
+
+    auto print_row_double = [label_width, value_width, print_separator](const std::string& key, double value) {
+        print_separator();
+        std::cout << "| " << std::left << std::setw(label_width) << key
+                << " :" << std::right << std::setw(value_width -1)
+                << std::fixed << std::setprecision(2) << value << " |\n";
+    };
+
+
+    std::cout << "+---------------------------------------------------------------+\n";
+    std::cout << "|                      Event Metrics Summary                    |\n";
+    std::cout << "+---------------------------------------------------------------+\n";
+
+    print_row("Event Name", event_name);
+    print_row("Resolved", resolved ? "Yes" : "No");
+    print_row("Winning Side", win_side);
+    print_row("Total Orders", std::to_string(static_cast<int>(total_orders)));
+    print_row_double("Total YES Stake", total_yes);
+    print_row_double("Total NO Stake", total_no);
+    print_row_double("Max Single Stake", max_stake);
+    print_row_double("Event Funds", event_funds);
+    print_row_double("Win Payout", win_payout);
+    print_row_double("Profit/Loss", resolved ? profit_loss : 0.0);
+    print_row_double("Risk Cap", risk_cap);
+    print_row_double("Potential Loss if Opposite Side Wins", resolved ? potential_loss_other_side : 0.0);
+    print_row_double("Total Liquidity Staked", total_yes + total_no);
+    if (resolved && win_payout > 0)
+    {
+        print_row_double("Payout Ratio (win/event funds)", win_payout / event_funds);
+    }
+
+    std::cout << "+---------------------------------------------------------------+\n";
+
+    sqlite3_close(db);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /*************************************************************************
 ** Order Book Related Functions
 *************************************************************************/
