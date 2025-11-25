@@ -4,8 +4,8 @@
 // Order Interface
 
 enum class Side {
-    YES,
-    NO
+    NO,
+    YES
 };
 
 struct Order
@@ -15,6 +15,7 @@ struct Order
     double price;
     double expected_cashout;
     Side side;
+    double payout;
 };
 
 

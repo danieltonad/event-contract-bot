@@ -25,5 +25,4 @@ std::vector<Event> list_all_events(bool resolved = false);
 
 // order book related functions
 void new_order(int event_id, bool side, double stake, double price, double expected_cashout);
-void update_order_payouts(int event_id, bool outcome, double& expected_total_payouts);
 std::vector<Order> list_event_orders(const int event_id);

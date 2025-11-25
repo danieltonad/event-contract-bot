@@ -25,7 +25,7 @@ private:
     bool list_events();
     bool stake_event(Event& event);
     bool event_quote(Event& event);
-    bool event_orders(const int id);
+    bool event_orders(Event& event);
     bool resolve_event(Event& event);
     bool metrics();
 };

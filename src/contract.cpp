@@ -114,7 +114,7 @@ Order LMSRContract::buy(Side side, double stake)
     double side_price = (side == Side::YES) ? current_prices[Side::YES] : current_prices[Side::NO];
 
     // Create order object
-    Order order{contract_id, stake, round_figure(side_price), round_figure(stake / side_price), side};
+    Order order{contract_id, stake, round_figure(side_price), round_figure(stake / side_price), side, 0.0};
 
     // Persist to database
     new_order(contract_id, (side == Side::YES), stake, order.price, order.expected_cashout);

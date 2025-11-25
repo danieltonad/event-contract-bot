@@ -4,7 +4,7 @@ void Console::run()
 {
     // initialize db
     initialize_database();
-    
+
     // command loop
     std::string cmd;
     print_welcome();
@@ -35,10 +35,10 @@ void Console::run()
 void Console::print_welcome()
 {
     std::cout << "\033[1;38;5;88m"
-                << "*****************************************************************************************************\n"
-                << "*                                Welcome to the Event Contract Exchange Bot!                        *\n"
-                << "*****************************************************************************************************\n"
-                << "\033[0m";
+              << "*****************************************************************************************************\n"
+              << "*                                Welcome to the Event Contract Exchange Bot!                        *\n"
+              << "*****************************************************************************************************\n"
+              << "\033[0m";
 }
 
 bool Console::dispatch(const std::string &cmd)
@@ -102,12 +102,12 @@ bool Console::dispatch(const std::string &cmd)
 
     if (command == "orders")
     {
-        int event_id;
+        Event event;
         try
         {
-            event_id = std::stoi(arg);
-            Event ev = get_event_details(arg);
-            if (ev.id == 0)
+            int event_id = std::stoi(arg);
+            event = get_event_details(arg);
+            if (event.id == 0)
             {
                 return true;
             }
@@ -117,12 +117,12 @@ bool Console::dispatch(const std::string &cmd)
             std::cout << "Invalid event ID.\n";
             return true;
         }
-        return event_orders(event_id);
+        return event_orders(event);
     }
 
     if (command == "resolve")
     {
-         Event event;
+        Event event;
         try
         {
             event = get_event_details(arg);
@@ -266,9 +266,6 @@ bool Console::list_events()
     return true;
 }
 
-
-
-
 bool Console::stake_event(Event &event)
 {
     std::cout << "You are about to stake for event '" << event.name << "':\n";
@@ -278,8 +275,8 @@ bool Console::stake_event(Event &event)
     // build prompt string
     std::ostringstream prompt;
     prompt << "Choose side [YES (" << round_figure(quote.price_yes)
-        << ") / NO (" << round_figure(quote.price_no)
-        << ") ]: ";
+           << ") / NO (" << round_figure(quote.price_no)
+           << ") ]: ";
     std::string side_input;
 
     bool ok = ask_and_validate(
@@ -289,17 +286,18 @@ bool Console::stake_event(Event &event)
         {
             std::string lower = s;
             std::transform(lower.begin(), lower.end(), lower.begin(),
-                           [](unsigned char c){ return std::tolower(c); });
+                           [](unsigned char c)
+                           { return std::tolower(c); });
             return lower == "yes" || lower == "no";
-        }
-    );
+        });
 
     if (!ok)
-        return true;  // user cancelled with :b or empty
+        return true; // user cancelled with :b or empty
 
     // Normalize & convert to enum
     std::transform(side_input.begin(), side_input.end(), side_input.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+                   [](unsigned char c)
+                   { return std::tolower(c); });
 
     Side chosen_side = (side_input == "yes") ? Side::YES : Side::NO;
 
@@ -323,11 +321,10 @@ bool Console::stake_event(Event &event)
             {
                 return false;
             }
-        }
-    );
+        });
 
     if (!ok)
-        return true;  // user cancelled with :b or empty
+        return true; // user cancelled with :b or empty
 
     quote = state.at(event.id)->generate_quote(); // refresh quote before confirming
     double stake_amount = std::stod(stake_input);
@@ -345,25 +342,28 @@ bool Console::stake_event(Event &event)
         {
             std::string lower = s;
             std::transform(lower.begin(), lower.end(), lower.begin(),
-                           [](unsigned char c){ return std::tolower(c); });
+                           [](unsigned char c)
+                           { return std::tolower(c); });
             return lower == "y" || lower == "n";
-        }
-    );
+        });
 
     if (!ok || confirm_input == "n")
     {
         std::cout << "Order cancelled.\n";
         return true;
     }
-    else {
+    else
+    {
         // place order
         Order order = state.at(event.id)->buy(chosen_side, stake_amount);
-        if (order.event_id == 0) {
+        if (order.event_id == 0)
+        {
             std::cout << "Order failed.\n";
             return true;
         }
 
-        else {
+        else
+        {
             std::cout << "Order placed successfully: "
                       << "Stake $" << std::fixed << std::setprecision(2) << order.stake
                       << " on " << (order.side == Side::YES ? "YES" : "NO")
@@ -373,16 +373,8 @@ bool Console::stake_event(Event &event)
         }
     }
 
-
-
-    
-
     return true;
 }
-
-
-
-
 
 bool Console::event_quote(Event &event)
 {
@@ -394,34 +386,46 @@ bool Console::event_quote(Event &event)
     return true;
 }
 
-bool Console::event_orders(const int id)
+bool Console::event_orders(Event &event)
 {
-    std::cout << "Orders for event '" << id << "':\n";
-    std::vector<Order> orders = list_event_orders(id);
+    std::cout << "Orders for event '" << event.name << "':\n";
+    std::vector<Order> orders = list_event_orders(event.id);
+    auto columns = std::vector<std::pair<std::string, std::function<std::string(const Order &)>>>{
+        {"Stake", [](const Order &o)
+         {
+             std::ostringstream oss;
+             oss << std::fixed << std::setprecision(1) << o.stake;
+             return oss.str();
+         }},
+        {"Side", [](const Order &o)
+         { return o.side == Side::YES ? "YES" : "NO"; }},
+        {"Price", [](const Order &o)
+         {
+             std::ostringstream oss;
+             oss << std::fixed << std::setprecision(2) << o.price;
+             return oss.str();
+         }},
+        {"Expected Cashout", [](const Order &o)
+         {
+             std::ostringstream oss;
+             oss << std::fixed << std::setprecision(2) << o.expected_cashout;
+             return oss.str();
+         }}};
 
-    print_table(orders, {{"Stake", [](const Order &o)
-                          {
-                              std::ostringstream oss;
-                              oss << std::fixed << std::setprecision(1) << o.stake;
-                              return oss.str();
-                          }},
-                         {"Side", [](const Order &o)
-                          { return o.side == Side::YES ? "YES" : "NO"; }},
-                         {"Price", [](const Order &o)
-                          {
-                              std::ostringstream oss;
-                              oss << std::fixed << std::setprecision(2) << o.price;
-                              return oss.str();
-                          }},
-                         {"Expected Cashout", [](const Order &o)
-                          {
-                              std::ostringstream oss;
-                              oss << std::fixed << std::setprecision(2) << o.expected_cashout;
-                              return oss.str();
-                          }}});
+    // Only add "Payout" column if the event is resolved
+    if (event.resolved)
+    {
+        columns.push_back({"Payout", [](const Order &o) {
+            std::ostringstream oss;
+            oss << std::fixed << std::setprecision(2) << o.payout;
+            return oss.str();
+        }});
+    }
+
+    print_table(orders, columns);
+
     return true;
 }
-
 
 bool Console::resolve_event(Event &event)
 {
@@ -435,17 +439,18 @@ bool Console::resolve_event(Event &event)
         {
             std::string lower = s;
             std::transform(lower.begin(), lower.end(), lower.begin(),
-                           [](unsigned char c){ return std::tolower(c); });
+                           [](unsigned char c)
+                           { return std::tolower(c); });
             return lower == "yes" || lower == "no";
-        }
-    );
+        });
 
     if (!ok)
-        return true;  // user cancelled with :b or empty
+        return true; // user cancelled with :b or empty
 
     // Normalize & convert to bool
     std::transform(outcome_input.begin(), outcome_input.end(), outcome_input.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+                   [](unsigned char c)
+                   { return std::tolower(c); });
 
     bool outcome = (outcome_input == "yes");
 
@@ -457,9 +462,6 @@ bool Console::resolve_event(Event &event)
 
     return true;
 }
-
-
-
 
 bool Console::metrics()
 {
