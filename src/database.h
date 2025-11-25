@@ -3,6 +3,11 @@
 #include "sqlite3.h"
 #include "orders.h"
 #include "event.h"
+#include <ctime>
+#include <cstdio>     // for std::sscanf
+#include <cctype>     // for std::isdigit
+#include <vector>
+
 
 extern const char* database_path;
 
@@ -15,8 +20,10 @@ int new_event(const std::string& tag, const std::string& name, const std::string
 void update_event_state(int event_id, double q_yes, double q_no, double event_funds);
 void resolve_event_outcome(int event_id, bool outcome, double& expected_total_payouts);
 Event get_event_details(const std::string& id_or_tag);
+std::vector<Event> list_all_events(bool resolved = false);
 
 
 // order book related functions
 void new_order(int event_id, bool side, double stake, double price, double expected_cashout);
 void update_order_payouts(int event_id, bool outcome, double& expected_total_payouts);
+std::vector<Order> list_event_orders(const int event_id);

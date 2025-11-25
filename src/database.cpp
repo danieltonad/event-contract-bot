@@ -1,8 +1,6 @@
 #include "database.h"
 #include "utils.h"
-#include <ctime>
-#include <cstdio>     // for std::sscanf
-#include <cctype>     // for std::isdigit
+
 
 const char* database_path = "database.db";
 
@@ -389,7 +387,7 @@ Event get_event_details(const std::string& id_or_tag) {
         txt = sqlite3_column_text(stmt, 14);
         ev.resolved_at = txt ? reinterpret_cast<const char*>(txt) : std::string();
     } else if (rc == SQLITE_DONE) {
-        error_msg("Event not found for '" + id_or_tag + "'.");
+        error_msg("Event not found for : '" + id_or_tag + "'.");
     } else {
         error_msg("Failed to read event: " + std::string(sqlite3_errmsg(db)));
     }
@@ -398,6 +396,84 @@ Event get_event_details(const std::string& id_or_tag) {
     sqlite3_close(db);
     return ev;
 }
+
+
+
+std::vector<Event> list_all_events(bool resolved) {
+    std::vector<Event> events;
+    sqlite3* db = nullptr;
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_open(database_path, &db)) {
+        error_msg("Can't open database: " + std::string(db ? sqlite3_errmsg(db) : "unknown"));
+        if (db) sqlite3_close(db);
+        return events;
+    }
+
+    const char* sql = R"(
+        SELECT id, tag, name, risk_cap, outcome, resolved, q_yes, q_no, event_funds,
+               win_payout, order_count, profit_loss, maturity, created_at, resolved_at
+        FROM events
+        WHERE resolved = ?
+        ORDER BY id DESC;
+    )";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        error_msg("Failed to prepare select statement: " + std::string(sqlite3_errmsg(db)));
+        sqlite3_close(db);
+        return events;
+    }
+
+    sqlite3_bind_int(stmt, 1, resolved ? 1 : 0);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Event ev;
+        ev.id = sqlite3_column_int(stmt, 0);
+
+        const unsigned char* txt = sqlite3_column_text(stmt, 1);
+        ev.tag = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        txt = sqlite3_column_text(stmt, 2);
+        ev.name = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        ev.risk_cap = sqlite3_column_double(stmt, 3);
+
+        ev.outcome = (sqlite3_column_type(stmt, 4) == SQLITE_NULL) ? -1 : sqlite3_column_int(stmt, 4);
+        ev.resolved = sqlite3_column_int(stmt, 5) != 0;
+        ev.q_yes = sqlite3_column_double(stmt, 6);
+        ev.q_no = sqlite3_column_double(stmt, 7);
+        ev.event_funds = sqlite3_column_double(stmt, 8);
+        ev.win_payout = sqlite3_column_double(stmt, 9);
+        ev.order_count = sqlite3_column_int(stmt, 10);
+        ev.profit_loss = sqlite3_column_double(stmt, 11);
+
+        txt = sqlite3_column_text(stmt, 12);
+        ev.maturity = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        txt = sqlite3_column_text(stmt, 13);
+        ev.created_at = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        txt = sqlite3_column_text(stmt, 14);
+        ev.resolved_at = txt ? reinterpret_cast<const char*>(txt) : std::string();
+
+        events.push_back(std::move(ev));
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return events;
+}
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -520,6 +596,7 @@ void new_order(int event_id, bool side, double stake, double price, double expec
 
     sqlite3_close(db);
 } 
+
 
 
 // update payout for all orders based on event outcome
@@ -655,6 +732,51 @@ void update_order_payouts(int event_id, bool outcome, double& expected_total_pay
     sqlite3_close(db);
 }
 
+
+
+
+// list event orders
+std::vector<Order> list_event_orders(const int event_id) {
+    std::vector<Order> orders;
+    sqlite3* db = nullptr;
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_open(database_path, &db)) {
+        error_msg("Can't open database: " + std::string(db ? sqlite3_errmsg(db) : "unknown"));
+        if (db) sqlite3_close(db);
+        return orders;
+    }
+
+    const char* sql = R"(
+        SELECT event_id, side, stake, price, expected_cashout
+        FROM order_book
+        WHERE event_id = ?
+        ORDER BY id ASC;
+    )";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        error_msg("Failed to prepare select statement: " + std::string(sqlite3_errmsg(db)));
+        sqlite3_close(db);
+        return orders;
+    }
+
+    sqlite3_bind_int(stmt, 1, event_id);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Order ord;
+        ord.event_id = sqlite3_column_int(stmt, 0);
+        ord.side = static_cast<Side>(sqlite3_column_int(stmt, 1));
+        ord.stake = sqlite3_column_double(stmt, 2);
+        ord.price = sqlite3_column_double(stmt, 3);
+        ord.expected_cashout = sqlite3_column_double(stmt, 4);
+
+        orders.push_back(std::move(ord));
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return orders;
+}
 
 
 

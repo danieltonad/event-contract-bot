@@ -2,6 +2,10 @@
 #include <cmath>
 #include <sstream>
 #include <iostream>
+#include <ctime>
+#include <iomanip>
+#include <functional>
+
 
 template <typename T>
 std::string to_string_safe(const T& value) {
@@ -20,6 +24,40 @@ inline bool is_integer(const std::string& s) {
     }
     return true;
 }
+
+
+
+
+inline bool is_alphanumeric(const std::string& s) {
+    for (char c : s) {
+        if (!std::isalnum(static_cast<unsigned char>(c))) return false;
+    }
+    return true;
+}
+
+
+inline bool is_positive_number(const std::string& s) {
+    try {
+        double val = std::stod(s);
+        return val > 0.0;
+    } catch (...) {
+        return false;
+    }
+}
+
+inline bool nonEmpty(const std::string& s) { return !s.empty(); }
+
+inline bool is_valid_risk_cap(const std::string& s, int min_value) {
+    try {
+        int val = std::stoi(s);
+        return val >= min_value;
+    } catch (...) {
+        return false;
+    }
+}
+
+
+
 
 
 inline double round_figure(double value, int decimals = 2) {
@@ -71,10 +109,94 @@ inline bool is_valid_datetime(const std::string& s) {
 
 inline bool valid_maturity(const std::string& s) {
     if (s.size() != 19) return false;
-    if (s[4] != '-' || s[7] != '-' || s[10] != ' ' || s[13] != ':' || s[16] != ':') return false;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (i == 4 || i == 7 || i == 10 || i == 13 || i == 16) continue;
-        if (!std::isdigit(static_cast<unsigned char>(s[i]))) return false;
-    }
+    const bool ok =
+        s[4] == '-' && s[7] == '-' &&
+        s[10] == ' ' &&
+        s[13] == ':' && s[16] == ':';
+    if (!ok) return false;
+
+    for (int i : {0,1,2,3,5,6,8,9,11,12,14,15,17,18})
+        if (!std::isdigit(static_cast<unsigned char>(s[i])))
+            return false;
+
     return true;
+}
+
+
+inline bool maturity_at_least_24h_future(const std::string& s) {
+    if (!valid_maturity(s)) return false;
+
+    int Y, M, D, h, m, sec;
+    if (std::sscanf(s.c_str(), "%4d-%2d-%2d %2d:%2d:%2d",
+                    &Y, &M, &D, &h, &m, &sec) != 6)
+        return false;
+
+    std::tm tm_val = {};
+    tm_val.tm_year = Y - 1900;
+    tm_val.tm_mon  = M - 1;
+    tm_val.tm_mday = D;
+    tm_val.tm_hour = h;
+    tm_val.tm_min  = m;
+    tm_val.tm_sec  = sec;
+    tm_val.tm_isdst = -1;  // let the system decide
+
+    std::time_t event_time = std::mktime(&tm_val);
+    if (event_time == -1) return false;
+
+    std::time_t now = std::time(nullptr);
+    std::time_t min_time = now + 24 * 60 * 60;
+
+    return event_time >= min_time;
+}
+
+
+
+
+
+
+
+
+
+// table
+template<typename T>
+inline void print_table(const std::vector<T>& items, const std::vector<std::pair<std::string, std::function<std::string(const T&)>>>& columns){
+    // Calculate column widths
+    std::vector<size_t> widths;
+    widths.reserve(columns.size());
+    for (const auto& col : columns) {
+        size_t max_width = col.first.size();
+        for (const auto& item : items) {
+            size_t len = col.second(item).size();
+            if (len > max_width) max_width = len;
+        }
+        widths.push_back(max_width);
+    }
+
+    // Print header
+    std::cout << '+';
+    for (size_t w : widths) std::cout << std::string(w + 2, '-') << '+';
+    std::cout << '\n';
+
+    std::cout << '|';
+    for (size_t i = 0; i < columns.size(); ++i) {
+        std::cout << ' ' << std::setw(widths[i]) << std::left << columns[i].first << ' ' << '|';
+    }
+    std::cout << '\n';
+
+    std::cout << '+';
+    for (size_t w : widths) std::cout << std::string(w + 2, '-') << '+';
+    std::cout << '\n';
+
+    // Print rows
+    for (const auto& item : items) {
+        std::cout << '|';
+        for (size_t i = 0; i < columns.size(); ++i) {
+            std::cout << ' ' << std::setw(widths[i]) << std::left << columns[i].second(item) << ' ' << '|';
+        }
+        std::cout << '\n';
+    }
+
+    std::cout << '+';
+    for (size_t w : widths) std::cout << std::string(w + 2, '-') << '+';
+    std::cout << '\n';
 }
