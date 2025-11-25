@@ -20,14 +20,14 @@ struct Quote {
 class LMSRContract {
     private:
         mutable std::mutex contract_mutex; 
-    public:
-        int contract_id;
-        std::string name;
         double risk_cap;
         double b;
         double q_T;
         double q_F;
         double total_deposits;
+    public:
+        int contract_id;
+        std::string name;
 
     
     LMSRContract(int contract_id_, const std::string &name_, double risk_cap_ = 100.0, double q_T_ = 0.0, double q_F_ = 0.0, double total_deposits_ = 0.0);

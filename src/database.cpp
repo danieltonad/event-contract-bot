@@ -272,7 +272,7 @@ void resolve_event_outcome(int event_id, bool outcome) {
     sqlite3_close(db);
 
     // 4. Delegate order payout updates
-    update_order_payouts(event_id, outcome, win_payout);
+    update_order_payouts(event_id, outcome);
 }
 
 
@@ -387,7 +387,7 @@ Event get_event_details(const std::string& id_or_tag) {
         txt = sqlite3_column_text(stmt, 14);
         ev.resolved_at = txt ? reinterpret_cast<const char*>(txt) : std::string();
     } else if (rc == SQLITE_DONE) {
-        error_msg("Event not found for : '" + id_or_tag + "'.");
+        error_msg(std::string("Event with  ") + (use_id ? "id " : "tag ") + "'" + id_or_tag + "' not found.");
     } else {
         error_msg("Failed to read event: " + std::string(sqlite3_errmsg(db)));
     }
