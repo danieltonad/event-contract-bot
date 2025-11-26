@@ -1,5 +1,5 @@
 
-# Event Contract Execution Bot (C++ / SQLite / HTTP API)
+# Event Contract Execution Bot
 
 A minimal event-market execution engine built on the **Logarithmic Market Scoring Rule (LMSR)**.
 Supports multiple binary markets, generates LMSR quotes, executes stakes with slippage, persists state using SQLite, and exposes a thread-safe HTTP API.
