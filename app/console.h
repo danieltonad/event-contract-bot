@@ -1,6 +1,8 @@
 #pragma once
 #include "database.h"
 #include "contract.h"
+#include "json.hpp"
+#include "httplib.h"
 #include "utils.h"
 #include "event.h"
 #include <iostream>
@@ -28,4 +30,5 @@ private:
     bool event_orders(Event& event);
     bool resolve_event(Event& event);
     bool metrics(const int  event_id);
+    void start_http_server();
 };

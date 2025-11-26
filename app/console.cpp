@@ -2,16 +2,20 @@
 
 void Console::run()
 {
+    
     // initialize db
     initialize_database();
-
+    
     // command loop
     std::string cmd;
     print_welcome();
-
+    
+    // start http server in background
+    start_http_server();
+    
     // resume contracts states
     std::vector<Event> events = list_all_events(false);
-
+    
     for (auto &e : events)
     {
         state[e.id] = std::make_unique<LMSRContract>(e.id, e.name, e.risk_cap, e.q_yes, e.q_no, e.event_funds);
@@ -20,9 +24,10 @@ void Console::run()
     {
         warning_msg((std::string("[Resumed ") + to_string_safe(state.size()) + " ongoing contracts states from database.]\n").c_str());
     }
-
+    
     // usage breif
     std::cout << "Type 'help' for list of commands.\n";
+    
 
     while (true)
     {
@@ -36,12 +41,14 @@ void Console::run()
 
 void Console::print_welcome()
 {
-    std::cout << "\033[1;38;5;88m"
+    std::cout << "\033[3;34m"
               << "*****************************************************************************************************\n"
               << "*                                Welcome to the Event Contract Exchange Bot!                        *\n"
               << "*****************************************************************************************************\n"
               << "\033[0m";
 }
+
+
 
 bool Console::dispatch(const std::string &cmd)
 {
@@ -259,6 +266,9 @@ bool Console::add_event()
     std::cout << "Creating event..." << std::endl;
     int event_id = new_event(tag, name, maturity, static_cast<double>(risk_cap));
     std::cout << "Event created with ID: " << event_id << ", Tag: " << tag << std::endl;
+
+    // initialize contract state
+    state[event_id] = std::make_unique<LMSRContract>(event_id, name, static_cast<double>(risk_cap), 0.0, 0.0, 0.0);
 
     return true;
 }
@@ -488,4 +498,125 @@ bool Console::metrics(const int event_id)
 {
     event_metrics_summary(event_id);
     return true;
+}
+
+
+
+
+
+
+
+
+// http server
+void Console::start_http_server()
+{
+    std::thread([this] {
+        httplib::Server svr;
+
+        // --- Helper: safe JSON response ---
+        auto json_response = [](httplib::Response& res, const nlohmann::json& j, int status = 200) {
+            res.status = status;
+            res.set_content(j.dump(), "application/json");
+        };
+
+        // --- Helper: error response ---
+        auto json_error = [&](httplib::Response& res, const std::string& msg, int status = 400) {
+            json_response(res, {{"error", msg}}, status);
+        };
+
+        // --- GET /events ---
+        svr.Get("/events", [this, &json_response](const httplib::Request&, httplib::Response& res) {
+            try {
+                nlohmann::json j;
+                auto events = list_all_events(false);
+                for (const auto& e : events) {
+                    j.push_back({
+                        {"id", e.id},
+                        {"tag", e.tag},
+                        {"name", e.name},
+                        {"liquidity", round_figure(e.event_funds)},
+                        {"orders", e.order_count},
+                        {"maturity", e.maturity}
+                    });
+                }
+                json_response(res, j);
+            } catch (const std::exception& ex) {
+                json_response(res, {{"error", ex.what()}}, 500);
+            }
+        });
+
+        // --- GET /quote/<id> ---
+        svr.Get(R"(/quote/(\d+))", [this, &json_error, &json_response](const httplib::Request& req, httplib::Response& res) {
+            try {
+                int id = std::stoi(req.matches[1]);
+                auto it = state.find(id);
+                if (it == state.end()) {
+                    json_error(res, "Event not found", 404);
+                    return;
+                }
+
+                Quote q = it->second->generate_quote();
+                nlohmann::json j{
+                    {"yes_price", round_figure(q.price_yes)},
+                    {"no_price", round_figure(q.price_no)},
+                    {"max_stake", round_figure(q.size)}
+                };
+                json_response(res, j);
+            } catch (const std::exception& ex) {
+                json_response(res, {{"error", ex.what()}}, 500);
+            }
+        });
+
+        // --- POST /order/<id> ---
+        svr.Post(R"(/order/(\d+))", [this, &json_error, &json_response](const httplib::Request& req, httplib::Response& res) {
+            try {
+                int id = std::stoi(req.matches[1]);
+                auto it = state.find(id);
+                if (it == state.end()) {
+                    json_error(res, "Event not found", 404);
+                    return;
+                }
+
+                // Parse JSON body safely
+                nlohmann::json body;
+                try {
+                    body = nlohmann::json::parse(req.body);
+                } catch (const std::exception&) {
+                    json_error(res, "Invalid JSON body");
+                    return;
+                }
+
+                if (!body.contains("stake") || !body.contains("side")) {
+                    json_error(res, "Missing 'stake' or 'side' in request");
+                    return;
+                }
+
+                double stake = body["stake"].get<double>();
+                std::string side = body["side"].get<std::string>();
+                if (side != "yes" && side != "no") {
+                    json_error(res, "Invalid side; must be 'yes' or 'no'");
+                    return;
+                }
+
+                Side s = (side == "yes") ? Side::YES : Side::NO;
+
+                Order o = it->second->buy(s, stake);
+
+                nlohmann::json j{
+                    {"event_id", o.event_id},
+                    {"side", side},
+                    {"stake", round_figure(o.stake)},
+                    {"price", round_figure(o.price)},
+                    {"expected_cashout", round_figure(o.expected_cashout)}
+                };
+                json_response(res, j);
+
+            } catch (const std::exception& ex) {
+                json_response(res, {{"error", ex.what()}}, 500);
+            }
+        });
+
+        success_msg("[HTTP SERVER] running on 127.0.0.1:4444\n");
+        svr.listen("127.0.0.1", 4444);
+    }).detach();
 }

@@ -425,7 +425,7 @@ void update_event_state(int event_id, double q_yes, double q_no, double event_fu
 // retrieve event details (for future use)
 Event get_event_details(const std::string &id_or_tag)
 {
-    Event ev;
+    Event ev = Event{0, "", "", 0.0, std::nullopt, false, 0.0, 0.0, 0.0, 0.0, 0, 0.0, "", "", std::nullopt};
     sqlite3 *db = nullptr;
     sqlite3_stmt *stmt = nullptr;
 

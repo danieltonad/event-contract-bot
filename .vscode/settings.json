@@ -68,6 +68,23 @@
     "thread": "cpp",
     "unordered_map": "cpp",
     "xhash": "cpp",
-    "algorithm": "cpp"
+    "algorithm": "cpp",
+    "any": "cpp",
+    "codecvt": "cpp",
+    "condition_variable": "cpp",
+    "csignal": "cpp",
+    "deque": "cpp",
+    "filesystem": "cpp",
+    "random": "cpp",
+    "ranges": "cpp",
+    "regex": "cpp",
+    "set": "cpp",
+    "shared_mutex": "cpp",
+    "source_location": "cpp",
+    "span": "cpp",
+    "typeindex": "cpp",
+    "unordered_set": "cpp",
+    "valarray": "cpp",
+    "variant": "cpp"
   }
 }
