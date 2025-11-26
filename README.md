@@ -158,13 +158,4 @@ Console commands:
   :b                      — back/cancel
 ```
 
-## Scalability Notes
-
-* Core LMSR engine is isolated and ready for service deployment
-* Exposed HTTP API supports multi-user access out of the box
-* Contract objects run under mutex guards for thread-safe concurrency
-* Use **PostgreSQL** for relational event and order data, with **Redis** (or similar) for fast, real-time access to each contract’s `qYes`/`qNo` curve state
-
-Supports **low-latency, concurrent execution** in production environments.
-
 
