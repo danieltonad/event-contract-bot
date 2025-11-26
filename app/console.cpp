@@ -559,7 +559,7 @@ void Console::start_http_server()
                 nlohmann::json j{
                     {"yes_price", round_figure(q.price_yes)},
                     {"no_price", round_figure(q.price_no)},
-                    {"max_stake", round_figure(q.size)}
+                    {"max_stake", static_cast<int>(q.size)}
                 };
                 json_response(res, j);
             } catch (const std::exception& ex) {
@@ -599,6 +599,12 @@ void Console::start_http_server()
                 }
 
                 Side s = (side == "yes") ? Side::YES : Side::NO;
+
+                Quote q = it->second->generate_quote();
+                if (stake <= 0.0 || stake > q.size) {
+                    json_error(res, "Invalid stake amount, must be > 0 and <= " + std::to_string(static_cast<int>(q.size)));
+                    return;
+                }
 
                 Order o = it->second->buy(s, stake);
 
